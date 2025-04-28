@@ -7,26 +7,38 @@ import express from "express";
 import axios from "axios";
 import dotenv from "dotenv";
 
+// Load environment variables from .env file
 dotenv.config();
 
-const { SHOPIFY_ACCESS_TOKEN, SHOPIFY_STORE_DOMAIN, SHOPIFY_API_VERSION = '2025-04', MCP_PROTOCOL_VERSION = '2024-11-05', PORT = 3000 } = process.env;
+// Extract and validate required environment variables
+const {
+  SHOPIFY_ACCESS_TOKEN,
+  SHOPIFY_STORE_DOMAIN,
+  SHOPIFY_API_VERSION = '2025-04',
+  MCP_PROTOCOL_VERSION = '2024-11-05',
+  PORT = 3000
+} = process.env;
 
+// Validate required Shopify credentials
 if (!SHOPIFY_ACCESS_TOKEN || !SHOPIFY_STORE_DOMAIN) {
   console.error('Missing Shopify credentials');
   process.exit(1);
 }
 
+// Initialize Express application
 const app = express();
 
-// Health check endpoint
+// Health check endpoint for monitoring
 app.get('/healthz', (req, res) => {
   res.status(200).send('OK');
 });
 
+// Initialize MCP server with configuration
 const mcpServer = new Server(
   {
     name: "shopify-mcp-server",
     version: "1.0.0",
+    protocolVersion: MCP_PROTOCOL_VERSION
   },
   {
     capabilities: {
@@ -38,8 +50,14 @@ const mcpServer = new Server(
   }
 );
 
+// Track active SSE transport for message handling
 let activeTransport = null;
 
+/**
+ * Search for products in Shopify store by keyword
+ * @param {string} keyword - Search term to find products
+ * @returns {Promise<Array>} - Array of products with id, title, price, and image
+ */
 async function searchProducts(keyword) {
   const { data } = await axios.get(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products.json`, {
     headers: { 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN },
@@ -53,6 +71,10 @@ async function searchProducts(keyword) {
   }));
 }
 
+/**
+ * Get recommended products from Shopify store
+ * @returns {Promise<Array>} - Array of best-selling products with id, title, price, and image
+ */
 async function recommendProducts() {
   const { data } = await axios.get(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products.json`, {
     headers: { 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN },
@@ -66,6 +88,7 @@ async function recommendProducts() {
   }));
 }
 
+// Register tool listing handler
 mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
@@ -92,6 +115,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
   };
 });
 
+// Register tool execution handler
 mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
@@ -108,12 +132,14 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
   throw new Error(`Unknown tool: ${name}`);
 });
 
+// SSE endpoint for real-time communication
 app.get('/sse', (req, res) => {
   const transport = new SSEServerTransport('/messages', res);
   activeTransport = transport;
   mcpServer.connect(transport);
 });
 
+// Message handling endpoint for SSE
 app.post('/messages', (req, res) => {
   if (activeTransport) {
     activeTransport.handlePostMessage(req, res);
@@ -122,6 +148,7 @@ app.post('/messages', (req, res) => {
   }
 });
 
+// Start the server
 app.listen(PORT, () => {
   console.log(`MCP server running at http://localhost:${PORT}`);
 });
